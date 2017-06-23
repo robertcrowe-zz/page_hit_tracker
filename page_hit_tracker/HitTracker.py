@@ -11,6 +11,7 @@ import time
 import datetime
 from datetime import timedelta
 from bisect import bisect_left
+import threading
 
 try: # different for local debug
     from .monostate import MonoState
@@ -41,6 +42,7 @@ class HitTracker(MonoState, AbstractTracker):
         
         self._max_mins = abs(max_mins) # stay positive, even if they go negative
         self._prune_chunksize = prune_chunksize # to avoid pruning with every append
+        self._lock = threading.RLock()
     
     def open(self):
         """Because other implementations may need this"""
@@ -50,19 +52,21 @@ class HitTracker(MonoState, AbstractTracker):
     def close(self):
         """Close the connection and clean up"""
         if self._connected: # allow them to close again, so don't raise exception
-            self._connected = False
-            self._data = {}
+            with self._lock:
+                self._connected = False
+                self._data = {}
     
     def _prune_history(self, url):
         """Private - Keeps the in-memory data from growing too big"""
         if not self._connected:
             raise TrackerException('HitTracker._prune_history: Tried to prune when not connected')
         
-        if len(self._data[url]) > 0:
-            oldest_allowed = datetime.datetime.now() - timedelta(minutes=self._max_mins)
-            too_old = bisect_left(self._data[url], oldest_allowed.timestamp())
-            if too_old >= self._prune_chunksize:
-                self._data[url] = self._data[url][too_old:]
+        with self._lock:
+            if len(self._data[url]) > 0:
+                oldest_allowed = datetime.datetime.now() - timedelta(minutes=self._max_mins)
+                too_old = bisect_left(self._data[url], oldest_allowed.timestamp())
+                if too_old >= self._prune_chunksize:
+                    self._data[url] = self._data[url][too_old:]
     
     def add_hit(self, url, ts=None):
         """Add a hit for a page
@@ -84,11 +88,12 @@ class HitTracker(MonoState, AbstractTracker):
         elif isinstance(ts, datetime.datetime):
             raise TrackerException('HitTracker.add_hit: You passed me a datetime instead of a timestamp')
         
-        if url not in self._data.keys():
-            self._data[url] = []
-        else:
-            self._prune_history(url)
-        self._data[url].append(ts)
+        with self._lock:
+            if url not in self._data.keys():
+                self._data[url] = []
+            else:
+                self._prune_history(url)
+            self._data[url].append(ts)
         return self
     
     def num_hits_last_mins(self, minsback, url):
@@ -107,6 +112,7 @@ class HitTracker(MonoState, AbstractTracker):
             return 0
         
         print('Updated')
-        first_hit = datetime.datetime.now() - timedelta(minutes=abs(minsback))
-        startrange = bisect_left(self._data[url], first_hit.timestamp())
+        with self._lock:
+            first_hit = datetime.datetime.now() - timedelta(minutes=abs(minsback))
+            startrange = bisect_left(self._data[url], first_hit.timestamp())
         return len(self._data[url]) - startrange
