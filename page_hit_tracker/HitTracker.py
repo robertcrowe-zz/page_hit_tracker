@@ -42,7 +42,7 @@ class HitTracker(MonoState, AbstractTracker):
         
         self._max_mins = abs(max_mins) # stay positive, even if they go negative
         self._prune_chunksize = prune_chunksize # to avoid pruning with every append
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
     
     def open(self):
         """Because other implementations may need this"""
@@ -61,12 +61,11 @@ class HitTracker(MonoState, AbstractTracker):
         if not self._connected:
             raise TrackerException('HitTracker._prune_history: Tried to prune when not connected')
         
-        with self._lock:
-            if len(self._data[url]) > 0:
-                oldest_allowed = datetime.datetime.now() - timedelta(minutes=self._max_mins)
-                too_old = bisect_left(self._data[url], oldest_allowed.timestamp())
-                if too_old >= self._prune_chunksize:
-                    self._data[url] = self._data[url][too_old:]
+        if len(self._data[url]) > 0:
+            oldest_allowed = datetime.datetime.now() - timedelta(minutes=self._max_mins)
+            too_old = bisect_left(self._data[url], oldest_allowed.timestamp())
+            if too_old >= self._prune_chunksize:
+                self._data[url] = self._data[url][too_old:]
     
     def add_hit(self, url, ts=None):
         """Add a hit for a page
